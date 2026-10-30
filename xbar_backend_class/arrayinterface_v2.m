@@ -10,7 +10,7 @@ classdef arrayinterface_v2 < handle
         
         % Blind memristor update parameters
         th_set = 0;
-        th_reset = -0;
+        th_reset = -0;  
         
         Vg_max = 1.5; % Max SET gate voltage
         Vg_min = 0.6; % Min SET gate voltage
@@ -90,7 +90,7 @@ classdef arrayinterface_v2 < handle
         end
         %%
         function initialize_weights(obj)
-            % Initailzie weights
+            % Initialize weights
             
             % RESET the arrays
             Vr = cell(length(obj.net_size) - 1, 1); Vr(:) = {obj.V_reset};
@@ -160,7 +160,7 @@ classdef arrayinterface_v2 < handle
             
         end
         %%
-        function set_weights_gradient(obj, grad)
+        function -(obj, grad)
             % Blind weight update
             
             % Initialize reset, gate, gate apply

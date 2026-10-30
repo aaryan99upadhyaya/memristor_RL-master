@@ -33,7 +33,7 @@ classdef Agent < handle
     
     methods
         %%
-        function obj = Agent(net_size, array_interface, varargin)
+        function obj = Agent(net_size, varargin)
             % Create the agent obj
             
             % Input (state vector) size
@@ -43,7 +43,7 @@ classdef Agent < handle
             obj.actionCnt = net_size(end);
             
             % Interface with brain and memory classes
-            obj.brain = Brain(net_size, array_interface, varargin{:});
+            obj.brain = Brain(net_size, varargin{:});
             obj.memory = Memory(obj.memory_capacity);
             
             % Initial episilon

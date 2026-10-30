@@ -44,7 +44,7 @@ classdef arblayerfullconn < handle
     
     methods
         %%
-        function obj = arblayerfullconn(net_size, array_interface, varargin)
+        function obj = arblayerfullconn(net_size, varargin)
             % Create the multilayer perceptron obj
             
             okargs = {'optimizer', 'software'};
@@ -55,7 +55,7 @@ classdef arblayerfullconn < handle
             obj.net_size = net_size; % net_size: column vector, e.g. [4;64;2]
             
             % Link with array object
-            obj.array_interface = array_interface;
+            %obj.array_interface = array_interface;
                         
             % Assign dimensions to properties of the class
             obj.weights = cell(length(obj.net_size)-1,1);
@@ -72,15 +72,15 @@ classdef arblayerfullconn < handle
             % Initialization: weight and bias
 			
             % Initalize weight (non-software only)
-            if ~obj.software 
-                obj.array_interface.initialize_weights;
-            end
+            %if ~obj.software 
+            %    obj.array_interface.initialize_weights;
+            %end
 			
             for i=1:(length(net_size)-1)
                 
                 % Read initialized weights
                 if ~obj.software
-                    obj.weights{i} = obj.array_interface.read_weights(i);
+                    %obj.weights{i} = obj.array_interface.read_weights(i);
                 else
                     obj.weights{i} = 1*(rand(net_size(i+1),net_size(i))-0.5);
                 end

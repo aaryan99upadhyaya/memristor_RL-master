@@ -5,17 +5,17 @@ clear; close all;
 MAX_EPISODE = 300; WIN_CRITERIA = 1000; NET_SIZE = [4;48;48;2];
 NET_SIZE_length = length(NET_SIZE)-1;
 RATIO_WEIGHT_CONDUCTANCE = 0.00025 * ones(NET_SIZE_length, 1);
-OPTIMIZER = 'RMSprop'; SOFTWARE = false;
+OPTIMIZER = 'RMSprop'; SOFTWARE = true;
 
 %% Array obj and Array Interface obj
 
-base = multi_array(real_array2(1:128, 1:64));
-base.add_sub([20 1], [8 48]);
-base.add_sub([29 1], [96 48]);
-base.add_sub([20 49], [48 4]);
+%base = multi_array(real_array2(1:128, 1:64));
+%base.add_sub([20 1], [8 48]);
+%base.add_sub([29 1], [96 48]);
+%base.add_sub([20 49], [48 4]);
 
 % Declare array interface obj
-array_interface = arrayinterface_v2(base, NET_SIZE, RATIO_WEIGHT_CONDUCTANCE);
+%array_interface = arrayinterface_v2(base, NET_SIZE, RATIO_WEIGHT_CONDUCTANCE);
 
 %% RNG seed
 rng(5);
@@ -23,13 +23,13 @@ rng(5);
 %% Enviroment and Agent
 
 env=CartPole; % Enviroment
-agent=Agent(NET_SIZE, array_interface, 'optimizer', OPTIMIZER, 'software', SOFTWARE); % Agent
+agent=Agent(NET_SIZE, 'optimizer', OPTIMIZER, 'software', SOFTWARE); % Agent
 
 %% Data saving
 
 % Including hardware information
 s_hist = struct('epi_num', [], 'state', [], 'action', [], 'weights', [], 'bias',...
-    [], 'nabla_b', [], 'nabla_w', [], 'v_gate', [], 'G_full', [], 'I_dpe',[]);
+    [], 'nabla_b', [], 'nabla_w', [], 'v_gate', []);
 s_hist_pointer = 1;
 
 % Performance and loss (independent vectors)
@@ -47,8 +47,8 @@ loss_panel = subplot(3, NET_SIZE_length + 1, NET_SIZE_length + 2);
 I_raw_panel = subplot(3, NET_SIZE_length + 1, 2*NET_SIZE_length + 3);
 
 for i = 1:NET_SIZE_length
-    G_full_panel(i) = subplot(3, NET_SIZE_length + 1, 1 + i);
-    v_gate_panel(i) = subplot(3, NET_SIZE_length + 1, NET_SIZE_length + 2 + i);
+    %G_full_panel(i) = subplot(3, NET_SIZE_length + 1, 1 + i);
+    %v_gate_panel(i) = subplot(3, NET_SIZE_length + 1, NET_SIZE_length + 2 + i);
     weights_panel(i) = subplot(3, NET_SIZE_length + 1, NET_SIZE_length * 2 + 3 + i);
 end
 
@@ -70,13 +70,13 @@ for episode_counter = 1:MAX_EPISODE
             MSE_loss(s_hist_pointer) = agent.replay_predict(stat);
 
             % Record
-            s_hist(s_hist_pointer).G_full = array_interface.G_array; % The fast read G of the entire chip (read after last time update)
+            %s_hist(s_hist_pointer).G_full = array_interface.G_array; % The fast read G of the entire chip (read after last time update)
             s_hist(s_hist_pointer).weights = agent.brain.net.weights; % Weights
             s_hist(s_hist_pointer).bias = agent.brain.net.biases; % Biases
-            s_hist(s_hist_pointer).v_gate = array_interface.V_gate_last; % Gate voltages
+            %s_hist(s_hist_pointer).v_gate = array_interface.V_gate_last; % Gate voltages
             s_hist(s_hist_pointer).nabla_w = agent.brain.net.nabla_w; % Gradients (weights)
             s_hist(s_hist_pointer).nabla_b = agent.brain.net.nabla_b; % Gradients (biases)
-            s_hist(s_hist_pointer).I_dpe = array_interface.I_raw; % Raw DPE currents
+            %s_hist(s_hist_pointer).I_dpe = array_interface.I_raw; % Raw DPE currents
         end
         
         % The agent decides what action to take
@@ -111,10 +111,10 @@ for episode_counter = 1:MAX_EPISODE
         
         % Plot perf/weights of this episode
         if and(~mod(s_hist_pointer, 250), s_hist_pointer ~= 0)
-            plot_perf_weight(perf_panel, loss_panel, I_raw_panel,...
-                G_full_panel, v_gate_panel, weights_panel,...
-                perf(1:episode_counter), MSE_loss(1:s_hist_pointer), s_hist(s_hist_pointer).I_dpe,...
-                s_hist(s_hist_pointer).G_full, s_hist(s_hist_pointer).weights, s_hist(s_hist_pointer).v_gate);
+            plot_perf_weight(perf_panel, loss_panel,...
+                weights_panel,...
+                perf(1:episode_counter), MSE_loss(1:s_hist_pointer),...
+                s_hist(s_hist_pointer).weights);
         end
         
         % Increase the pointer
@@ -127,10 +127,10 @@ for episode_counter = 1:MAX_EPISODE
     
     % Exit condition (performance reached the threshold)
     if reward_episode > WIN_CRITERIA
-        plot_perf_weight(perf_panel, loss_panel, I_raw_panel,...
-            G_full_panel, v_gate_panel, weights_panel,...
-            perf(1:episode_counter), MSE_loss(1:s_hist_pointer), s_hist(s_hist_pointer).I_dpe,...
-            s_hist(s_hist_pointer).G_full, s_hist(s_hist_pointer).weights, s_hist(s_hist_pointer).v_gate);
+        plot_perf_weight(perf_panel, loss_panel,...
+            weights_panel,...
+            perf(1:episode_counter), MSE_loss(1:s_hist_pointer),...
+            s_hist(s_hist_pointer).weights);
         break
     end
 end
@@ -141,10 +141,10 @@ f_name1 = [t_now '_cartpole.mat'];
 save(f_name1, 'perf', 'MSE_loss', 's_hist', '-v7.3');
 
 %% Plot function
-function plot_perf_weight(perf_axes, loss_axes, I_raw_axes, ...
-    G_full_axes, weights_axes, v_gate_axes,...
-    perf, MSE_loss, I_dpe,...
-    G_full, weights, v_gate)
+function plot_perf_weight(perf_axes, loss_axes,...
+    weights_axes,...
+    perf, MSE_loss,...
+    weights)
     % Plot (performance, loss, voltages, and weights) per episode
 
     % Plot performance
@@ -156,17 +156,17 @@ function plot_perf_weight(perf_axes, loss_axes, I_raw_axes, ...
     plot(MSE_loss,'LineWidth',2); xlabel('No. Replays'); ylabel('MSE Loss'); title('Loss Fun');
     
     % Plot Raw DPE currents
-    axes(I_raw_axes); hold on;
-    for i=1:length(I_dpe)
-        plot(I_dpe{i});
-    end
-    hold off; xlim([0 64]); title('Raw current');
+    %axes(I_raw_axes); hold on;
+    %for i=1:length(I_dpe)
+    %    plot(I_dpe{i});
+    %end
+    %hold off; xlim([0 64]); title('Raw current');
     
     % Plot gate conductance, weights, gate voltage
     for i=1:length(weights)
-        axes(G_full_axes(i)); imagesc(G_full{i},[0 5e-4]); colorbar; title(['G ' num2str(i)]);
+        %axes(G_full_axes(i)); imagesc(G_full{i},[0 5e-4]); colorbar; title(['G ' num2str(i)]);
         axes(weights_axes(i)); imagesc(weights{i}); colorbar; title(['Weight ' num2str(i)]);
-        axes(v_gate_axes(i)); imagesc(v_gate{i},[0.5 1.5]); colorbar; title(['Vgate ' num2str(i)]);
+        %axes(v_gate_axes(i)); imagesc(v_gate{i},[0.5 1.5]); colorbar; title(['Vgate ' num2str(i)]);
     end
     
     % Draw

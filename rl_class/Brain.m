@@ -12,13 +12,13 @@ classdef Brain < handle
     
     methods
         %%
-        function obj = Brain(net_size, array_interface, varargin)
+        function obj = Brain(net_size, varargin)
             % Create brain obj
             
             obj.net_size = net_size;
             
             % Creat a two-layer feedforward fully connected network
-            obj.net = arblayerfullconn(net_size, array_interface, varargin{:});
+            obj.net = arblayerfullconn(net_size, varargin{:});
             
         end
         %%              
