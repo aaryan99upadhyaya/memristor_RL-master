@@ -7,6 +7,13 @@ NET_SIZE_length = length(NET_SIZE)-1;
 RATIO_WEIGHT_CONDUCTANCE = 0.00025 * ones(NET_SIZE_length, 1);
 OPTIMIZER = 'RMSprop'; SOFTWARE = true;
 
+% Software-only analogue conductance model.
+% Each signed weight is represented by two conductances in [0.1, 150] uS.
+CONDUCTANCE_MODE = true;
+CONDUCTANCE_NOISE_uS = 0.1;      % Gaussian standard deviation, in uS
+CONDUCTANCE_BITS = Inf;         % Inf: unquantized; 8: 8-bit readout
+NOISE_MODE = 'static';          % 'static' device offsets or 'read' noise
+
 %% Array obj and Array Interface obj
 
 %base = multi_array(real_array2(1:128, 1:64));
@@ -23,7 +30,19 @@ rng(5);
 %% Enviroment and Agent
 
 env=CartPole; % Enviroment
-agent=Agent(NET_SIZE, 'optimizer', OPTIMIZER, 'software', SOFTWARE); % Agent
+agent = Agent(NET_SIZE, ...
+    'optimizer', OPTIMIZER, ...
+    'software', SOFTWARE, ...
+    'conductance_mode', CONDUCTANCE_MODE, ...
+    'conductance_noise_uS', CONDUCTANCE_NOISE_uS, ...
+    'conductance_bits', CONDUCTANCE_BITS, ...
+    'noise_mode', NOISE_MODE); % Agent
+
+if CONDUCTANCE_MODE
+    fprintf('Conductance [%.1f, %.1f] uS; noise sigma %.3f uS; bits %g; mode %s\n', ...
+        agent.brain.net.G_min_uS, agent.brain.net.G_max_uS, ...
+        CONDUCTANCE_NOISE_uS, CONDUCTANCE_BITS, NOISE_MODE);
+end
 
 %% Data saving
 
@@ -54,15 +73,15 @@ end
 
 %%
 for episode_counter = 1:MAX_EPISODE
-    
+
     % Start a new episode
     stat = env.reset_episode; % Get a new state
     episode_over_flag = 0; % Episode end flag (false)
     reward_episode = 0; % Total reward of episode (zero)
-    
+
     % Each episode
     while ~episode_over_flag
-        
+
         % The first time no replay (nothing in memory)
         if s_hist_pointer > 1
             % Get experience from memory and train
@@ -78,23 +97,23 @@ for episode_counter = 1:MAX_EPISODE
             s_hist(s_hist_pointer).nabla_b = agent.brain.net.nabla_b; % Gradients (biases)
             %s_hist(s_hist_pointer).I_dpe = array_interface.I_raw; % Raw DPE currents
         end
-        
+
         % The agent decides what action to take
         % Physical DPE done in replay
         a = agent.act;
-        
+
         % Display
         display(['Step=', num2str(s_hist_pointer), ' Reward=', num2str(reward_episode),...
             ' Loss=', num2str(MSE_loss(s_hist_pointer))]);
 
         % Performs this action, get s_ (new state) and r (a reward)
         [stat_, r, episode_over_flag] = env.nextstate(a);
-        
+
         % Record
         s_hist(s_hist_pointer).epi_num = episode_counter; % Episode number
         s_hist(s_hist_pointer).state = stat; % Current state
         s_hist(s_hist_pointer).action = a; % Current action
-        
+
         % Next state is NaN (as a mark for Bellman equation) if game over
         if episode_over_flag
             stat_ = NaN;
@@ -102,13 +121,13 @@ for episode_counter = 1:MAX_EPISODE
 
         % Add to memory (as a 1x4 cell array)
         agent.observe({stat, a, r, stat_});
-        
+
         % Cummulated reward
         reward_episode = reward_episode + r;
-        
+
         % State evole
         stat = stat_;
-        
+
         % Plot perf/weights of this episode
         if and(~mod(s_hist_pointer, 250), s_hist_pointer ~= 0)
             plot_perf_weight(perf_panel, loss_panel,...
@@ -116,29 +135,47 @@ for episode_counter = 1:MAX_EPISODE
                 perf(1:episode_counter), MSE_loss(1:s_hist_pointer),...
                 s_hist(s_hist_pointer).weights);
         end
-        
+
         % Increase the pointer
         s_hist_pointer = s_hist_pointer+1;
 
     end
-    
+
     % Performance of this episode
     perf(episode_counter) = reward_episode;
-    
+
     % Exit condition (performance reached the threshold)
     if reward_episode > WIN_CRITERIA
-        plot_perf_weight(perf_panel, loss_panel,...
-            weights_panel,...
-            perf(1:episode_counter), MSE_loss(1:s_hist_pointer),...
-            s_hist(s_hist_pointer).weights);
-        break
-    end
+    last_step = s_hist_pointer - 1;
+
+    plot_perf_weight(perf_panel, loss_panel,...
+        weights_panel,...
+        perf(1:episode_counter), MSE_loss(1:last_step),...
+        s_hist(last_step).weights);
+
+    break
+end
 end
 
 %% Data Save
 t_now = datestr(now,'yyyymmdd HHMMSS');
 f_name1 = [t_now '_cartpole.mat'];
-save(f_name1, 'perf', 'MSE_loss', 's_hist', '-v7.3');
+% Retain conductance settings and final physical parameters for analysis.
+conductance_config = struct( ...
+    'enabled', CONDUCTANCE_MODE, ...
+    'G_min_uS', agent.brain.net.G_min_uS, ...
+    'G_max_uS', agent.brain.net.G_max_uS, ...
+    'noise_sigma_uS', CONDUCTANCE_NOISE_uS, ...
+    'bits', CONDUCTANCE_BITS, ...
+    'noise_mode', NOISE_MODE, ...
+    'W_max', agent.brain.net.W_max);
+final_G_pos_uS = agent.brain.net.G_pos_uS;
+final_G_neg_uS = agent.brain.net.G_neg_uS;
+final_noise_pos_uS = agent.brain.net.noise_pos_uS;
+final_noise_neg_uS = agent.brain.net.noise_neg_uS;
+save(f_name1, 'perf', 'MSE_loss', 's_hist', ...
+    'conductance_config', 'final_G_pos_uS', 'final_G_neg_uS', ...
+    'final_noise_pos_uS', 'final_noise_neg_uS', '-v7.3');
 
 %% Plot function
 function plot_perf_weight(perf_axes, loss_axes,...
@@ -150,25 +187,25 @@ function plot_perf_weight(perf_axes, loss_axes,...
     % Plot performance
     axes(perf_axes);
     plot(perf,'LineWidth',2); xlabel('Episode'); ylabel('Rewards'); title('Performance');
-    
+
     % Plot loss function
     axes(loss_axes);
     plot(MSE_loss,'LineWidth',2); xlabel('No. Replays'); ylabel('MSE Loss'); title('Loss Fun');
-    
+
     % Plot Raw DPE currents
     %axes(I_raw_axes); hold on;
     %for i=1:length(I_dpe)
     %    plot(I_dpe{i});
     %end
     %hold off; xlim([0 64]); title('Raw current');
-    
+
     % Plot gate conductance, weights, gate voltage
     for i=1:length(weights)
         %axes(G_full_axes(i)); imagesc(G_full{i},[0 5e-4]); colorbar; title(['G ' num2str(i)]);
         axes(weights_axes(i)); imagesc(weights{i}); colorbar; title(['Weight ' num2str(i)]);
         %axes(v_gate_axes(i)); imagesc(v_gate{i},[0.5 1.5]); colorbar; title(['Vgate ' num2str(i)]);
     end
-    
+
     % Draw
     drawnow
 end
