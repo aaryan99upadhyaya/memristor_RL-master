@@ -3,6 +3,7 @@ clear; close all;
 
 % Constant
 MAX_EPISODE = 200; WIN_CRITERIA = 1000; NET_SIZE = [4;48;48;2];
+STATE_NORM = [2.4; 3.0; 2.094; 3.0];  % normalise state to approx [-1, 1]
 NET_SIZE_length = length(NET_SIZE)-1;
 RATIO_WEIGHT_CONDUCTANCE = 0.00025 * ones(NET_SIZE_length, 1);
 OPTIMIZER = 'RMSprop'; SOFTWARE = true;
@@ -17,6 +18,7 @@ NOISE_MODE = 'static';          % 'static' device offsets or 'read' noise
 %profilers
 first_succesful_epoch = 0;
 n_succesful_epochs = 0;
+best_reward = 0; % Tracks best episode for animate_cartpole
 
 
 %% Array obj and Array Interface obj
@@ -84,11 +86,14 @@ for i = 1:NET_SIZE_length
     weights_panel(i) = subplot(3, NET_SIZE_length + 1, NET_SIZE_length * 2 + 3 + i);
 end
 
+training_started = false;  % flag to reset epsilon at the first training step
+
 %%
 for episode_counter = 1:MAX_EPISODE
 
     % Start a new episode
     stat = env.reset_episode; % Get a new state
+    stat = stat ./ STATE_NORM;
     episode_over_flag = 0; % Episode end flag (false)
     reward_episode = 0; % Total reward of episode (zero)
 
@@ -102,8 +107,15 @@ for episode_counter = 1:MAX_EPISODE
     % Each episode
     while ~episode_over_flag
 
-        % The first time no replay (nothing in memory)
-        if s_hist_pointer > 1
+        % Reset epsilon the first time the buffer is ready (training starts)
+        if ~training_started && agent.memory.count >= agent.replay_start_size
+            training_started = true;
+            agent.steps = 0;
+            agent.epsilon = agent.max_epsilon;
+        end
+
+        % Only replay once the buffer has enough diverse samples
+        if agent.memory.count >= agent.replay_start_size
             % Get experience from memory and train
             % Also do DPE for action prediction
             MSE_loss(s_hist_pointer) = agent.replay_predict(stat);
@@ -124,12 +136,19 @@ for episode_counter = 1:MAX_EPISODE
         % Physical DPE done in replay
         a = agent.act;
 
-        % Display
-        display(['Episode=', num2str(episode_counter),' Step=', num2str(s_hist_pointer), ' Reward=', num2str(reward_episode),...
-            ' Loss=', num2str(MSE_loss(s_hist_pointer))]);
+        % Display (skip Loss before replay has started)
+        if agent.memory.count >= agent.replay_start_size
+            display(['Episode=', num2str(episode_counter),' Step=', num2str(s_hist_pointer), ' Reward=', num2str(reward_episode),...
+                ' Loss=', num2str(MSE_loss(s_hist_pointer))]);
+        else
+            display(['Episode=', num2str(episode_counter),' Step=', num2str(s_hist_pointer), ' Reward=', num2str(reward_episode), ' [filling buffer first...]']);
+        end
 
         % Performs this action, get s_ (new state) and r (a reward)
         [stat_, r, episode_over_flag] = env.nextstate(a);
+        if ~episode_over_flag
+            stat_ = stat_ ./ STATE_NORM;  % normalise before storing in memory
+        end
 
         % Record
         s_hist(s_hist_pointer).epi_num = episode_counter; % Episode number
@@ -172,7 +191,7 @@ for episode_counter = 1:MAX_EPISODE
         stat = stat_;
 
         % Plot perf/weights of this episode
-        if and(~mod(s_hist_pointer, 250), s_hist_pointer ~= 0)
+        if ~mod(s_hist_pointer, 250)
             plot_perf_weight(perf_panel, loss_panel,...
                 weights_panel,...
                 perf(1:episode_counter), MSE_loss(1:s_hist_pointer),...
@@ -190,6 +209,12 @@ for episode_counter = 1:MAX_EPISODE
 
     % Performance of this episode
     perf(episode_counter) = reward_episode;
+
+    % Always track the best episode so animate_cartpole always has valid data
+    if reward_episode >= best_reward
+        best_reward = reward_episode;
+        episodeData{1} = run;
+    end
 
     % Exit condition (performance reached the threshold)
     if reward_episode > WIN_CRITERIA
@@ -253,6 +278,14 @@ fprintf('Simulation data save completed in %.2f seconds.\n', toc);
 
 fprintf('\nTraining data successfully saved.\n');
 
+fprintf('MATLAB training script finished successfully.\n');
+
+% Close all figures
+close all;
+
+% Clear workspace variables
+clearvars;
+
 % Retain conductance settings and final physical parameters for analysis.
 %conductance_config = struct( ...
 %    'enabled', CONDUCTANCE_MODE, ...
@@ -303,11 +336,3 @@ end
 % Draw
 drawnow
 end
-
-% Close all figures
-close all;
-
-fprintf('MATLAB training script finished successfully.\n');
-
-% Clear workspace variables
-clearvars;
