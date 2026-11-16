@@ -2,7 +2,7 @@
 clear; close all;
 
 % Constant
-MAX_EPISODE = 300; WIN_CRITERIA = 1000; NET_SIZE = [4;48;48;2];
+MAX_EPISODE = 200; WIN_CRITERIA = 1000; NET_SIZE = [4;48;48;2];
 NET_SIZE_length = length(NET_SIZE)-1;
 RATIO_WEIGHT_CONDUCTANCE = 0.00025 * ones(NET_SIZE_length, 1);
 OPTIMIZER = 'RMSprop'; SOFTWARE = true;
@@ -14,6 +14,11 @@ CONDUCTANCE_NOISE_uS = 0.1;      % Gaussian standard deviation, in uS
 CONDUCTANCE_BITS = Inf;         % Inf: unquantized; 8: 8-bit readout
 NOISE_MODE = 'static';          % 'static' device offsets or 'read' noise
 
+%profilers
+first_succesful_epoch = 0;
+n_succesful_epochs = 0;
+
+
 %% Array obj and Array Interface obj
 
 %base = multi_array(real_array2(1:128, 1:64));
@@ -23,7 +28,12 @@ NOISE_MODE = 'static';          % 'static' device offsets or 'read' noise
 
 % Declare array interface obj
 %array_interface = arrayinterface_v2(base, NET_SIZE, RATIO_WEIGHT_CONDUCTANCE);
-
+% Adding these elements to the filepath
+addpath(genpath(fullfile(pwd, 'game_simulator_class')))
+addpath(genpath(fullfile(pwd, 'xbar_backend_class')))
+addpath(genpath(fullfile(pwd, 'rl_class')))
+addpath(genpath(fullfile(pwd, 'dense_network_class')))
+addpath(genpath(fullfile(pwd, 'array_class')))
 %% RNG seed
 rng(5);
 
@@ -45,6 +55,9 @@ if CONDUCTANCE_MODE
 end
 
 %% Data saving
+% This will save the data for simulation:
+% --------------------------------------
+episodeData{1} = []; % saving only the episode that has max reward
 
 % Including hardware information
 s_hist = struct('epi_num', [], 'state', [], 'action', [], 'weights', [], 'bias',...
@@ -79,6 +92,13 @@ for episode_counter = 1:MAX_EPISODE
     episode_over_flag = 0; % Episode end flag (false)
     reward_episode = 0; % Total reward of episode (zero)
 
+        % Initialize recording structure
+    run.states = env.state_now(:).';
+    run.actions = [];
+    run.rewards = [];
+    run.times = 0;
+    step = 0;
+
     % Each episode
     while ~episode_over_flag
 
@@ -89,6 +109,7 @@ for episode_counter = 1:MAX_EPISODE
             MSE_loss(s_hist_pointer) = agent.replay_predict(stat);
 
             % Record
+            if mod(s_hist_pointer,250) == 0
             %s_hist(s_hist_pointer).G_full = array_interface.G_array; % The fast read G of the entire chip (read after last time update)
             s_hist(s_hist_pointer).weights = agent.brain.net.weights; % Weights
             s_hist(s_hist_pointer).bias = agent.brain.net.biases; % Biases
@@ -96,6 +117,7 @@ for episode_counter = 1:MAX_EPISODE
             s_hist(s_hist_pointer).nabla_w = agent.brain.net.nabla_w; % Gradients (weights)
             s_hist(s_hist_pointer).nabla_b = agent.brain.net.nabla_b; % Gradients (biases)
             %s_hist(s_hist_pointer).I_dpe = array_interface.I_raw; % Raw DPE currents
+            end
         end
 
         % The agent decides what action to take
@@ -103,7 +125,7 @@ for episode_counter = 1:MAX_EPISODE
         a = agent.act;
 
         % Display
-        display(['Step=', num2str(s_hist_pointer), ' Reward=', num2str(reward_episode),...
+        display(['Episode=', num2str(episode_counter),' Step=', num2str(s_hist_pointer), ' Reward=', num2str(reward_episode),...
             ' Loss=', num2str(MSE_loss(s_hist_pointer))]);
 
         % Performs this action, get s_ (new state) and r (a reward)
@@ -113,6 +135,27 @@ for episode_counter = 1:MAX_EPISODE
         s_hist(s_hist_pointer).epi_num = episode_counter; % Episode number
         s_hist(s_hist_pointer).state = stat; % Current state
         s_hist(s_hist_pointer).action = a; % Current action
+
+         % Recording the data for the simulation:
+        % ------------------------------------------
+        % RECORD SIMULATION DATA
+        % ------------------------------------------
+        step = step + 1;
+
+        % Record actual cart-pole state (angle in radians)
+        run.states(step+1,:) = env.state_now(:).';
+
+        % Record network output
+        run.actions(step,1) = a;
+
+        % Record reward
+        run.rewards(step,1) = r;
+
+        % Record simulation time
+        run.times(step+1,1) = step * env.tau;
+
+        % End of my changes
+        % -----------------------------------------
 
         % Next state is NaN (as a mark for Bellman equation) if game over
         if episode_over_flag
@@ -139,6 +182,10 @@ for episode_counter = 1:MAX_EPISODE
         % Increase the pointer
         s_hist_pointer = s_hist_pointer+1;
 
+        if reward_episode > WIN_CRITERIA
+            episode_over_flag=1;
+        end
+
     end
 
     % Performance of this episode
@@ -146,66 +193,121 @@ for episode_counter = 1:MAX_EPISODE
 
     % Exit condition (performance reached the threshold)
     if reward_episode > WIN_CRITERIA
-    last_step = s_hist_pointer - 1;
+        % Adding Simulation data to memory:
+        % ----------------------------------
+        episodeData{1} = run;
+        last_step = s_hist_pointer - 1;
+        if first_succesful_epoch == 0
+            first_succesful_epoch = episode_counter;
+        end
+        n_succesful_epochs = n_succesful_epochs + 1;
+        plot_perf_weight(perf_panel, loss_panel,...
+            weights_panel,...
+            perf(1:episode_counter), MSE_loss(1:last_step),...
+            s_hist(last_step).weights);
 
-    plot_perf_weight(perf_panel, loss_panel,...
-        weights_panel,...
-        perf(1:episode_counter), MSE_loss(1:last_step),...
-        s_hist(last_step).weights);
-
-    break
+        break
+    end
 end
-end
 
-%% Data Save
-t_now = datestr(now,'yyyymmdd HHMMSS');
+%% FINAL DATA SAVE AND SHUTDOWN
+
+fprintf('\nTraining completed or stopped.\n');
+
+% Check memory occupied by the largest data structures
+whos s_hist episodeData MSE_loss
+
+display(['First episode that reached win criterion = ', num2str(first_succesful_epoch), ' Number of succesful episodes = ', num2str(n_succesful_epochs)]);
+
+% Generate timestamp for unique filename
+t_now = datestr(now,'yyyymmdd_HHMMSS');
 f_name1 = [t_now '_cartpole.mat'];
-% Retain conductance settings and final physical parameters for analysis.
-conductance_config = struct( ...
-    'enabled', CONDUCTANCE_MODE, ...
-    'G_min_uS', agent.brain.net.G_min_uS, ...
-    'G_max_uS', agent.brain.net.G_max_uS, ...
-    'noise_sigma_uS', CONDUCTANCE_NOISE_uS, ...
-    'bits', CONDUCTANCE_BITS, ...
-    'noise_mode', NOISE_MODE, ...
-    'W_max', agent.brain.net.W_max);
-final_G_pos_uS = agent.brain.net.G_pos_uS;
-final_G_neg_uS = agent.brain.net.G_neg_uS;
-final_noise_pos_uS = agent.brain.net.noise_pos_uS;
-final_noise_neg_uS = agent.brain.net.noise_neg_uS;
-save(f_name1, 'perf', 'MSE_loss', 's_hist', ...
-    'conductance_config', 'final_G_pos_uS', 'final_G_neg_uS', ...
-    'final_noise_pos_uS', 'final_noise_neg_uS', '-v7.3');
 
+fprintf('\nChecking variable sizes...\n');
+whos perf MSE_loss s_hist episodeData
+
+% Save final training results
+fprintf('\nStarting final data save...\n');
+tic;
+
+%save(f_name1, ...
+%    'perf', ...
+%    'MSE_loss', ...
+%    's_hist', ...
+%    'episodeData', ...
+%    '-v7.3');
+%save(f_name1, ...
+%    'episodeData', ...
+%    '-v7.3');
+%
+%fprintf('Final data save completed in %.2f seconds.\n', toc);
+%fprintf('File: %s\n', f_name1);
+
+% Save simulation data separately
+fprintf('\nStarting simulation data save...\n');
+tic;
+
+save('cartpole_training_runs.mat', 'episodeData', '-v7.3');
+
+fprintf('Simulation data save completed in %.2f seconds.\n', toc);
+
+fprintf('\nTraining data successfully saved.\n');
+
+% Retain conductance settings and final physical parameters for analysis.
+%conductance_config = struct( ...
+%    'enabled', CONDUCTANCE_MODE, ...
+%    'G_min_uS', agent.brain.net.G_min_uS, ...
+%    'G_max_uS', agent.brain.net.G_max_uS, ...
+%    'noise_sigma_uS', CONDUCTANCE_NOISE_uS, ...
+%    'bits', CONDUCTANCE_BITS, ...
+%    'noise_mode', NOISE_MODE, ...
+%    'W_max', agent.brain.net.W_max);
+%final_G_pos_uS = agent.brain.net.G_pos_uS;
+%final_G_neg_uS = agent.brain.net.G_neg_uS;
+%final_noise_pos_uS = agent.brain.net.noise_pos_uS;
+%final_noise_neg_uS = agent.brain.net.noise_neg_uS;
+%save(f_name1, 'perf', 'MSE_loss', 's_hist', ...
+%    'conductance_config', 'final_G_pos_uS', 'final_G_neg_uS', ...
+%    'final_noise_pos_uS', 'final_noise_neg_uS', '-v7.3');
+%
 %% Plot function
 function plot_perf_weight(perf_axes, loss_axes,...
     weights_axes,...
     perf, MSE_loss,...
     weights)
-    % Plot (performance, loss, voltages, and weights) per episode
 
-    % Plot performance
-    axes(perf_axes);
-    plot(perf,'LineWidth',2); xlabel('Episode'); ylabel('Rewards'); title('Performance');
+% Plot (performance, loss, voltages, and weights) per episode
 
-    % Plot loss function
-    axes(loss_axes);
-    plot(MSE_loss,'LineWidth',2); xlabel('No. Replays'); ylabel('MSE Loss'); title('Loss Fun');
+% Plot performance
+axes(perf_axes);
+plot(perf,'LineWidth',2); xlabel('Episode'); ylabel('Rewards'); title('Performance');
 
-    % Plot Raw DPE currents
-    %axes(I_raw_axes); hold on;
-    %for i=1:length(I_dpe)
-    %    plot(I_dpe{i});
-    %end
-    %hold off; xlim([0 64]); title('Raw current');
+% Plot loss function
+axes(loss_axes);
+plot(MSE_loss,'LineWidth',2); xlabel('No. Replays'); ylabel('MSE Loss'); title('Loss Fun');
 
-    % Plot gate conductance, weights, gate voltage
-    for i=1:length(weights)
-        %axes(G_full_axes(i)); imagesc(G_full{i},[0 5e-4]); colorbar; title(['G ' num2str(i)]);
-        axes(weights_axes(i)); imagesc(weights{i}); colorbar; title(['Weight ' num2str(i)]);
-        %axes(v_gate_axes(i)); imagesc(v_gate{i},[0.5 1.5]); colorbar; title(['Vgate ' num2str(i)]);
-    end
+% Plot Raw DPE currents
+%axes(I_raw_axes); hold on;
+%for i=1:length(I_dpe)
+%    plot(I_dpe{i});
+%end
+%hold off; xlim([0 64]); title('Raw current');
 
-    % Draw
-    drawnow
+% Plot gate conductance, weights, gate voltage
+for i=1:length(weights)
+    %axes(G_full_axes(i)); imagesc(G_full{i},[0 5e-4]); colorbar; title(['G ' num2str(i)]);
+    axes(weights_axes(i)); imagesc(weights{i}); colorbar; title(['Weight ' num2str(i)]);
+    %axes(v_gate_axes(i)); imagesc(v_gate{i},[0.5 1.5]); colorbar; title(['Vgate ' num2str(i)]);
 end
+%
+% Draw
+drawnow
+end
+
+% Close all figures
+close all;
+
+fprintf('MATLAB training script finished successfully.\n');
+
+% Clear workspace variables
+clearvars;
