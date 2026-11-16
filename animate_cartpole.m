@@ -125,6 +125,10 @@ for k = 1:numSteps
     env.state_now = run.states(k,:)';
     env.CartPole_plot(ax,k-1);
 
+    % Update live position and angle plots on the first figure
+    addpoints(h_pos,   run.times(k), cart_position);
+    addpoints(h_angle, run.times(k), pole_angle_deg);
+
     % Position live label next to the pole
     % Keep label to the right of the cart
     label_x = cart_position + 0.65;

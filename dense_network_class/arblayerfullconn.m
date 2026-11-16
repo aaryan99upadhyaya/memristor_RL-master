@@ -38,7 +38,7 @@ classdef arblayerfullconn < handle
         momentum = 0.0;
 
         % RMSprop
-        decay = 0.9;
+        decay = 0.99;
         eps = 1e-8
 
         % Conductance model (all conductances in microsiemens)
@@ -147,7 +147,7 @@ classdef arblayerfullconn < handle
                 if ~obj.software
                     %obj.weights{i} = obj.array_interface.read_weights(i);
                 else
-                    obj.weights{i} = 1*(rand(net_size(i+1),net_size(i))-0.5);
+                    obj.weights{i} = randn(net_size(i+1), net_size(i)) * sqrt(2 / net_size(i));
                 end
 
                 if obj.software && obj.conductance_mode
@@ -287,7 +287,23 @@ classdef arblayerfullconn < handle
                 % Devide by minibatch size
                 obj.nabla_w{i} = 1 / size_minibatch * obj.nabla_w{i};
                 obj.nabla_b{i} = 1 / size_minibatch * obj.nabla_b{i};
+            end
 
+            % Global-norm gradient clipping (max_norm = 10)
+            grad_norm = 0;
+            for i = 1:(length(obj.net_size)-1)
+                grad_norm = grad_norm + sum(obj.nabla_w{i}(:).^2) + sum(obj.nabla_b{i}(:).^2);
+            end
+            grad_norm = sqrt(grad_norm);
+            if grad_norm > 10
+                clip_scale = 10 / grad_norm;
+                for i = 1:(length(obj.net_size)-1)
+                    obj.nabla_w{i} = obj.nabla_w{i} * clip_scale;
+                    obj.nabla_b{i} = obj.nabla_b{i} * clip_scale;
+                end
+            end
+
+            for i = 1:(length(obj.net_size) - 1)
                 if strcmp(obj.optimizer,'SGD')
                     % SGD optimizer
                     obj.nabla_w{i} = -obj.learningrate * obj.nabla_w{i} + ...
@@ -369,8 +385,9 @@ classdef arblayerfullconn < handle
             % Fetch forward pass output
             output_single = obj.a{length(obj.net_size) - 1}(:, sample_index);
 
-            % Single sample loss
-            single_loss = norm(label_single - output_single, 2);
+            % Single sample loss (Huber, delta=1)
+            e_loss = output_single - label_single;
+            single_loss = sum(arblayerfullconn.huber_loss(e_loss, 1));
 
             % Backward pass
             for i = (length(obj.net_size) - 1):-1:1
@@ -407,12 +424,21 @@ classdef arblayerfullconn < handle
     end
     methods(Static)
         %%
-        function costderi_output=cost_derivative(output,label)
-            % Delta of the output neuron (dE/d(output))
-            % MSE error assumed
-            % Output/label/costderi_output: a column vector
-
-            costderi_output = -(label - output);
+        function g = cost_derivative(output, label)
+            % Huber gradient (delta=1); same as MSE for |e|<=1, clipped beyond
+            e = output - label;
+            delta = 1;
+            g = zeros(size(e));
+            mask = abs(e) <= delta;
+            g(mask)  = e(mask);
+            g(~mask) = delta * sign(e(~mask));
+        end
+        %%
+        function out = huber_loss(e, delta)
+            out = zeros(size(e));
+            mask = abs(e) <= delta;
+            out(mask)  = 0.5 * e(mask).^2;
+            out(~mask) = delta * (abs(e(~mask)) - 0.5 * delta);
         end
         %%
         function relu_output=relu(relu_inputs)
