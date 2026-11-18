@@ -1,8 +1,15 @@
 %% The script for cart-pole problem
 clear; close all;
 
+% Adding these elements to the filepath
+addpath(genpath(fullfile(pwd, 'game_simulator_class')))
+addpath(genpath(fullfile(pwd, 'xbar_backend_class')))
+addpath(genpath(fullfile(pwd, 'rl_class')))
+addpath(genpath(fullfile(pwd, 'dense_network_class')))
+addpath(genpath(fullfile(pwd, 'array_class')))
+
 % Constant
-MAX_EPISODE = 300; WIN_CRITERIA = 1000; NET_SIZE = [4;48;48;2];
+MAX_EPISODE = 100; WIN_CRITERIA = 1000; NET_SIZE = [4;48;48;2];
 NET_SIZE_length = length(NET_SIZE)-1;
 RATIO_WEIGHT_CONDUCTANCE = 0.00025 * ones(NET_SIZE_length, 1);
 OPTIMIZER = 'RMSprop'; SOFTWARE = true;
@@ -11,8 +18,8 @@ OPTIMIZER = 'RMSprop'; SOFTWARE = true;
 % Each signed weight is represented by two conductances in [0.1, 150] uS.
 CONDUCTANCE_MODE = true;
 CONDUCTANCE_NOISE_uS = 0.1;      % Gaussian standard deviation, in uS
-CONDUCTANCE_BITS = Inf;         % Inf: unquantized; 8: 8-bit readout
-NOISE_MODE = 'static';          % 'static' device offsets or 'read' noise
+CONDUCTANCE_BITS = 8;         % Inf: unquantized; 8: 8-bit readout
+NOISE_MODE = 'read';          % 'static' device offsets or 'read' noise
 
 %% Array obj and Array Interface obj
 
@@ -37,6 +44,10 @@ agent = Agent(NET_SIZE, ...
     'conductance_noise_uS', CONDUCTANCE_NOISE_uS, ...
     'conductance_bits', CONDUCTANCE_BITS, ...
     'noise_mode', NOISE_MODE); % Agent
+
+% This will save the data for simulation:
+% --------------------------------------
+episodeData = cell(MAX_EPISODE,1);
 
 if CONDUCTANCE_MODE
     fprintf('Conductance [%.1f, %.1f] uS; noise sigma %.3f uS; bits %g; mode %s\n', ...
@@ -79,6 +90,13 @@ for episode_counter = 1:MAX_EPISODE
     episode_over_flag = 0; % Episode end flag (false)
     reward_episode = 0; % Total reward of episode (zero)
 
+    % Initialize recording structure
+    run.states = env.state_now(:).';
+    run.actions = [];
+    run.rewards = [];
+    run.times = 0;
+    step = 0;
+
     % Each episode
     while ~episode_over_flag
 
@@ -89,6 +107,7 @@ for episode_counter = 1:MAX_EPISODE
             MSE_loss(s_hist_pointer) = agent.replay_predict(stat);
 
             % Record
+            if mod(s_hist_pointer,100000) == 0
             %s_hist(s_hist_pointer).G_full = array_interface.G_array; % The fast read G of the entire chip (read after last time update)
             s_hist(s_hist_pointer).weights = agent.brain.net.weights; % Weights
             s_hist(s_hist_pointer).bias = agent.brain.net.biases; % Biases
@@ -96,6 +115,7 @@ for episode_counter = 1:MAX_EPISODE
             s_hist(s_hist_pointer).nabla_w = agent.brain.net.nabla_w; % Gradients (weights)
             s_hist(s_hist_pointer).nabla_b = agent.brain.net.nabla_b; % Gradients (biases)
             %s_hist(s_hist_pointer).I_dpe = array_interface.I_raw; % Raw DPE currents
+            end
         end
 
         % The agent decides what action to take
@@ -113,6 +133,27 @@ for episode_counter = 1:MAX_EPISODE
         s_hist(s_hist_pointer).epi_num = episode_counter; % Episode number
         s_hist(s_hist_pointer).state = stat; % Current state
         s_hist(s_hist_pointer).action = a; % Current action
+
+        % Recording the data for the simulation:
+        % ------------------------------------------
+        % RECORD SIMULATION DATA
+        % ------------------------------------------
+        step = step + 1;
+
+        % Record actual cart-pole state (angle in radians)
+        run.states(step+1,:) = env.state_now(:).';
+
+        % Record network output
+        run.actions(step,1) = a;
+
+        % Record reward
+        run.rewards(step,1) = r;
+
+        % Record simulation time
+        run.times(step+1,1) = step * env.tau;
+
+        % End of my changes
+        % -----------------------------------------
 
         % Next state is NaN (as a mark for Bellman equation) if game over
         if episode_over_flag
@@ -140,6 +181,10 @@ for episode_counter = 1:MAX_EPISODE
         s_hist_pointer = s_hist_pointer+1;
 
     end
+
+    % Adding Simulation data to memory:
+    % ----------------------------------
+    episodeData{episode_counter} = run;
 
     % Performance of this episode
     perf(episode_counter) = reward_episode;
@@ -173,9 +218,20 @@ final_G_pos_uS = agent.brain.net.G_pos_uS;
 final_G_neg_uS = agent.brain.net.G_neg_uS;
 final_noise_pos_uS = agent.brain.net.noise_pos_uS;
 final_noise_neg_uS = agent.brain.net.noise_neg_uS;
-save(f_name1, 'perf', 'MSE_loss', 's_hist', ...
-    'conductance_config', 'final_G_pos_uS', 'final_G_neg_uS', ...
-    'final_noise_pos_uS', 'final_noise_neg_uS', '-v7.3');
+% save(f_name1, 'perf', 'MSE_loss', 's_hist', ...
+ %   'conductance_config', 'final_G_pos_uS', 'final_G_neg_uS', ...
+  %  'final_noise_pos_uS', 'final_noise_neg_uS', '-v7.3');
+
+  % Save simulation data separately
+  fprintf('\nStarting simulation data save...\n');
+  tic;
+
+  save('cartpole_training_runs.mat', 'episodeData', '-v7.3');
+
+  fprintf('Simulation data save completed in %.2f seconds.\n', toc);
+
+  fprintf('\nTraining data successfully saved.\n');
+  close all;
 
 %% Plot function
 function plot_perf_weight(perf_axes, loss_axes,...
